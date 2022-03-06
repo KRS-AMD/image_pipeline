@@ -29,7 +29,11 @@
 // LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 // ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
-#include <stereo_image_proc/stereo_processor.hpp>
+
+#include <memory>
+#include <mutex>
+#include <vector>
+#include <chrono>
 
 #include <cv_bridge/cv_bridge.h>
 #include <image_geometry/stereo_camera_model.h>
@@ -46,68 +50,18 @@
 
 #include <opencv2/calib3d/calib3d.hpp>
 
-#include <algorithm>
-#include <map>
-#include <memory>
-#include <string>
-#include <sstream>
-#include <utility>
-#include <vector>
+#include "stereo_image_proc/disparity_fpga.hpp"
+#include "stereo_image_proc/xf_stereo_pipeline_config.h"
+#include <vitis_common/common/xf_headers.hpp>
+#include <vitis_common/common/utilities.hpp>
+#include "tracetools_image_pipeline/tracetools.h"
+
+// Forward declaration of utility functions included at the end of this file
+std::vector<cl::Device> get_xilinx_devices();
+char* read_binary_file(const std::string &xclbin_file_name, unsigned &nb);
 
 namespace stereo_image_proc
 {
-
-class DisparityNode : public rclcpp::Node
-{
-public:
-  explicit DisparityNode(const rclcpp::NodeOptions & options);
-
-private:
-  enum StereoAlgorithm
-  {
-    BLOCK_MATCHING = 0,
-    SEMI_GLOBAL_BLOCK_MATCHING
-  };
-
-  // Subscriptions
-  image_transport::SubscriberFilter sub_l_image_, sub_r_image_;
-  message_filters::Subscriber<sensor_msgs::msg::CameraInfo> sub_l_info_, sub_r_info_;
-  using ExactPolicy = message_filters::sync_policies::ExactTime<
-    sensor_msgs::msg::Image,
-    sensor_msgs::msg::CameraInfo,
-    sensor_msgs::msg::Image,
-    sensor_msgs::msg::CameraInfo>;
-  using ApproximatePolicy = message_filters::sync_policies::ApproximateTime<
-    sensor_msgs::msg::Image,
-    sensor_msgs::msg::CameraInfo,
-    sensor_msgs::msg::Image,
-    sensor_msgs::msg::CameraInfo>;
-  using ExactSync = message_filters::Synchronizer<ExactPolicy>;
-  using ApproximateSync = message_filters::Synchronizer<ApproximatePolicy>;
-  std::shared_ptr<ExactSync> exact_sync_;
-  std::shared_ptr<ApproximateSync> approximate_sync_;
-  // Publications
-  std::shared_ptr<rclcpp::Publisher<stereo_msgs::msg::DisparityImage>> pub_disparity_;
-
-  // Handle to parameters callback
-  rclcpp::Node::OnSetParametersCallbackHandle::SharedPtr on_set_parameters_callback_handle_;
-
-  // Processing state (note: only safe because we're single-threaded!)
-  image_geometry::StereoCameraModel model_;
-  // contains scratch buffers for block matching
-  stereo_image_proc::StereoProcessor block_matcher_;
-
-  void connectCb();
-
-  void imageCb(
-    const sensor_msgs::msg::Image::ConstSharedPtr & l_image_msg,
-    const sensor_msgs::msg::CameraInfo::ConstSharedPtr & l_info_msg,
-    const sensor_msgs::msg::Image::ConstSharedPtr & r_image_msg,
-    const sensor_msgs::msg::CameraInfo::ConstSharedPtr & r_info_msg);
-
-  rcl_interfaces::msg::SetParametersResult parameterSetCb(
-    const std::vector<rclcpp::Parameter> & parameters);
-};
 
 // Some helper functions for adding a parameter to a collection
 static void add_param_to_map(
@@ -148,10 +102,46 @@ static void add_param_to_map(
   parameters[name] = std::make_pair(default_value, descriptor);
 }
 
-DisparityNode::DisparityNode(const rclcpp::NodeOptions & options)
-: rclcpp::Node("disparity_node", options)
+DisparityNodeFPGA::DisparityNodeFPGA(const rclcpp::NodeOptions & options)
+: rclcpp::Node("DisparityNodeFPGA", options)
 {
   using namespace std::placeholders;
+  
+  // Xilinx init
+
+  cl_int err;
+  unsigned fileBufSize;
+
+  // Get the device:
+  std::vector<cl::Device> devices = get_xilinx_devices();
+  // devices.resize(1);  // done below
+  cl::Device device = devices[0];
+
+  // Context, command queue and device name:
+  OCL_CHECK(err, context_ = new cl::Context(device, NULL, NULL, NULL, &err));
+  OCL_CHECK(err, queue_ = new cl::CommandQueue(*context_, device,
+                                    CL_QUEUE_PROFILING_ENABLE, &err));
+  OCL_CHECK(err, std::string device_name =
+                                  device.getInfo<CL_DEVICE_NAME>(&err));
+
+  std::cout << "INFO: Device found - " << device_name << std::endl;
+
+  // Load binary:
+  // NOTE: hardcoded path according to dfx-mgrd conventions
+  // TODO: generalize this using launch extra_args for composable Nodes
+  // see https://github.com/ros2/launch_ros/blob/master/launch_ros/launch_ros/descriptions/composable_node.py#L45
+  char* fileBuf = read_binary_file(
+        "/lib/firmware/xilinx/stereo_image_proc/stereo_image_proc.xclbin",
+        fileBufSize);
+  cl::Program::Binaries bins{{fileBuf, fileBufSize}};
+  devices.resize(1);
+  OCL_CHECK(err, cl::Program program(*context_, devices, bins, NULL, &err));
+
+  // Create a kernel:
+  OCL_CHECK(err, krnl_ = new cl::Kernel(program, "stereolbm_accel", &err));
+}
+
+// End Xilinx init
 
   // Declare/read parameters
   int queue_size = this->declare_parameter("queue_size", 5);
@@ -166,7 +156,7 @@ DisparityNode::DisparityNode(const rclcpp::NodeOptions & options)
         sub_l_image_, sub_l_info_,
         sub_r_image_, sub_r_info_));
     approximate_sync_->registerCallback(
-      std::bind(&DisparityNode::imageCb, this, _1, _2, _3, _4));
+      std::bind(&DisparityNodeFPGA::imageCb, this, _1, _2, _3, _4));
   } else {
     exact_sync_.reset(
       new ExactSync(
@@ -174,25 +164,15 @@ DisparityNode::DisparityNode(const rclcpp::NodeOptions & options)
         sub_l_image_, sub_l_info_,
         sub_r_image_, sub_r_info_));
     exact_sync_->registerCallback(
-      std::bind(&DisparityNode::imageCb, this, _1, _2, _3, _4));
+      std::bind(&DisparityNodeFPGA::imageCb, this, _1, _2, _3, _4));
   }
 
   // Register a callback for when parameters are set
   on_set_parameters_callback_handle_ = this->add_on_set_parameters_callback(
-    std::bind(&DisparityNode::parameterSetCb, this, _1));
+    std::bind(&DisparityNodeFPGA::parameterSetCb, this, _1));
 
   // Describe int parameters
   std::map<std::string, std::pair<int, rcl_interfaces::msg::ParameterDescriptor>> int_params;
-  add_param_to_map(
-    int_params,
-    "stereo_algorithm",
-    "Stereo algorithm: Block Matching (0) or Semi-Global Block Matching (1)",
-    0, 0, 1, 1);  // default, from, to, step
-  add_param_to_map(
-    int_params,
-    "prefilter_size",
-    "Normalization window size in pixels (must be odd)",
-    9, 5, 255, 2);
   add_param_to_map(
     int_params,
     "prefilter_cap",
@@ -200,80 +180,58 @@ DisparityNode::DisparityNode(const rclcpp::NodeOptions & options)
     31, 1, 63, 1);
   add_param_to_map(
     int_params,
-    "correlation_window_size",
-    "SAD correlation window width in pixels (must be odd)",
-    15, 5, 255, 2);
-  add_param_to_map(
-    int_params,
     "min_disparity",
     "Disparity to begin search at in pixels",
     0, -2048, 2048, 1);
   add_param_to_map(
     int_params,
-    "disparity_range",
-    "Number of disparities to search in pixels (must be a multiple of 16)",
-    64, 32, 4096, 16);
-  add_param_to_map(
-    int_params,
     "texture_threshold",
     "Filter out if SAD window response does not exceed texture threshold",
     10, 0, 10000, 1);
-  add_param_to_map(
-    int_params,
-    "speckle_size",
-    "Reject regions smaller than this size in pixels",
-    100, 0, 1000, 1);
-  add_param_to_map(
-    int_params,
-    "speckle_range",
-    "Maximum allowed difference between detected disparities",
-    4, 0, 31, 1);
-  add_param_to_map(
-    int_params,
-    "disp12_max_diff",
-    "Maximum allowed difference in the left-right disparity check in pixels"
-    " (Semi-Global Block Matching only)",
-    0, 0, 128, 1);
 
-  // Describe double parameters
+// Double params
   std::map<std::string, std::pair<double, rcl_interfaces::msg::ParameterDescriptor>> double_params;
   add_param_to_map(
     double_params,
     "uniqueness_ratio",
     "Filter out if best match does not sufficiently exceed the next-best match",
     15.0, 0.0, 100.0, 0.0);
-  add_param_to_map(
-    double_params,
-    "P1",
-    "The first parameter ccontrolling the disparity smoothness (Semi-Global Block Matching only)",
-    200.0, 0.0, 4000.0, 0.0);
-  add_param_to_map(
-    double_params,
-    "P2",
-    "The second parameter ccontrolling the disparity smoothness (Semi-Global Block Matching only)",
-    400.0, 0.0, 4000.0, 0.0);
-
-  // Describe bool parameters
-  std::map<std::string, std::pair<bool, rcl_interfaces::msg::ParameterDescriptor>> bool_params;
-  rcl_interfaces::msg::ParameterDescriptor full_dp_descriptor;
-  full_dp_descriptor.description =
-    "Run the full variant of the algorithm (Semi-Global Block Matching only)";
-  bool_params["full_dp"] = std::make_pair(false, full_dp_descriptor);
 
   // Declaring parameters triggers the previously registered callback
+
   this->declare_parameters("", int_params);
   this->declare_parameters("", double_params);
-  this->declare_parameters("", bool_params);
+
+ // Get params and assign values to to character sequence for stereolbm_accel block matching state
+  std::vector<std::string> param_names = {"prefilter_cap", "min_disparity", "texture_threshold", "uniqueness_ratio"};
+
+  std::vector<rclcpp::Parameter> params = this->get_parameters(param_names);
+  for (auto &param : params)
+  {
+    int index = 0;
+    RCLCPP_INFO(this->get_logger(), "param name: %s, value: %s",
+                param.get_name().c_str(), param.value_to_string().c_str());
+    switch(param.get_name().c_str()) {
+      case "prefilter_cap":
+        bm_state_[0] = param.value_to_string().c_string();
+      case "uniqueness_ratio":
+        bm_state_[1] = param.value_to_string().c_string();
+      case "texture_threshold":
+        bm_state_[2] = param.value_to_string().c_string();
+      case "min_disparity":
+        bm_state_[3] = param.value_to_string().c_string();
+    } // end-switch
+		    
+
+  } // end-for
 
   pub_disparity_ = create_publisher<stereo_msgs::msg::DisparityImage>("disparity", 1);
 
-  // TODO(jacobperron): Replace this with a graph event.
-  //                    Only subscribe if there's a subscription listening to our publisher.
   connectCb();
 }
 
 // Handles (un)subscribing when clients (un)subscribe
-void DisparityNode::connectCb()
+void DisparityNodeFPGA::connectCb()
 {
   // TODO(jacobperron): Add unsubscribe logic when we use graph events
   image_transport::TransportHints hints(this, "raw");
@@ -289,7 +247,7 @@ void DisparityNode::connectCb()
   sub_r_info_.subscribe(this, "right/camera_info", image_sub_rmw_qos);
 }
 
-void DisparityNode::imageCb(
+void DisparityNodeFPGA::imageCb(
   const sensor_msgs::msg::Image::ConstSharedPtr & l_image_msg,
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & l_info_msg,
   const sensor_msgs::msg::Image::ConstSharedPtr & r_image_msg,
@@ -308,87 +266,95 @@ void DisparityNode::imageCb(
   disp_msg->header = l_info_msg->header;
   disp_msg->image.header = l_info_msg->header;
 
+  // Allocate a new disparity info message
+  sensor_msgs::msg::CameraInfo::ConstSharedPtr disp_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(*l_info_msg);
+  
+  //sensor_msgs::msg::CameraInfo::ConstSharedPtr disp_r_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(*r_info_msg);
+ 
+  // Get dimensions for both l and r cameras from l camera info 
+  double scale_x = static_cast<double>(width_) / l_info_msg->width; 
+  double scale_y = static_cast<double>(height_) / l_info_msg->height;
+
+  dsp_info_msg->height = height_;
+  dsp_info_msg->width = width_;
   // Compute window of (potentially) valid disparities
-  int border = block_matcher_.getCorrelationWindowSize() / 2;
-  int left = block_matcher_.getDisparityRange() + block_matcher_.getMinDisparity() + border - 1;
-  int wtf;
-  if (block_matcher_.getMinDisparity() >= 0) {
-    wtf = border + block_matcher_.getMinDisparity();
+  // int border = block_matcher_.getCorrelationWindowSize() / 2;
+  // int left = block_matcher_.getDisparityRange() + block_matcher_.getMinDisparity() + border - 1;
+  // int wtf;
+  // TODO: replace with accel kernel w/ param prefilertcap, uniquenessratio,texturethreshold, mindisparity
+
+ /* if (block_matcher_.getMinDisparity() >= 0) {
+     wtf = border + block_matcher_.getMinDisparity();
   } else {
-    wtf = std::max(border, -block_matcher_.getMinDisparity());
-  }
-  // TODO(jacobperron): the message width has not been set yet! What should we do here?
-  int right = disp_msg->image.width - 1 - wtf;
-  int top = border;
-  int bottom = disp_msg->image.height - 1 - border;
-  disp_msg->valid_window.x_offset = left;
-  disp_msg->valid_window.y_offset = top;
-  disp_msg->valid_window.width = right - left;
-  disp_msg->valid_window.height = bottom - top;
+     wtf = std::max(border, -block_matcher_.getMinDisparity());
+  } */
+  // int right = disp_msg->image.width - 1 - wtf;
+  // int top = border;
+  // int bottom = disp_msg->image.height - 1 - border;
+  // disp_msg->valid_window.x_offset = left;
+  // disp_msg->valid_window.y_offset = top;
+  // disp_msg->valid_window.width = right - left;
+  // disp_msg->valid_window.height = bottom - top;
+  
+
+   // Vitis Vision library glue
+   cv_bridge::CvImagePtr cv_ptr_l;
+   cv_bridge::CvImagePtr cv_ptr_r;
+   cv::Mat img_l, img_r, result_hls;
+
+   // TODO: cv_bridge image msgs
+   cv_ptr_l = cv_bridge::toCvCopy(l_image_msg, sensor_msgs::image_encodings::MONO8);
+   cv_ptr_r = cv_bridge::toCvCopy(r_image_msg, sensor_msgs::image_encodings::MONO8);
 
   // Create cv::Mat views onto all buffers
-  const cv::Mat_<uint8_t> l_image =
+  /* const cv::Mat_<uint8_t> l_image =
     cv_bridge::toCvShare(l_image_msg, sensor_msgs::image_encodings::MONO8)->image;
   const cv::Mat_<uint8_t> r_image =
     cv_bridge::toCvShare(r_image_msg, sensor_msgs::image_encodings::MONO8)->image;
-
+*/
   // Perform block matching to find the disparities
-  block_matcher_.processDisparity(l_image, r_image, model_, *disp_msg);
+  //block_matcher_.processDisparity(l_image, r_image, model_, *disp_msg);
 
+  // OpenCL section WIP
+  
+  cl_int err;
+  size_t image_l_in_size_bytes, image_r_in_size_bytes, image_out_size_bytes;
+
+    // Assume RGB (3 channels)
+    result_hls.create(cv::Size(dsp_info_msg->width,
+                                dsp_info_msg->height), CV_8UC3);
+
+    image_l_in_size_bytes = l_info_msg->height * l_info_msg->width *
+                                  3 * sizeof(unsigned char);
+                                  3 * sizeof(unsigned char);
+
+    // Assume same size as left image for the buffer allocation
+    image_r_in_size_bytes = image_l_in_size_bytes;
+
+    image_out_size_bytes = dsp_info_msg->height * dsp_info_msg->width * 3 * sizeof(unsigned char);
+
+
+  // Allocate the buffers:
+  OCL_CHECK(err, cl::Buffer imageRToDevice(*context_, CL_MEM_READ_ONLY,
+                                          image_l_in_size_bytes, NULL, &err));
+  OCL_CHECK(err, cl::Buffer imageRToDevice(*context_, CL_MEM_READ_ONLY,
+                                          image_r_in_size_bytes, NULL, &err));
+  OCL_CHECK(err, cl::Buffer imageFromDevice(*context_, CL_MEM_WRITE_ONLY,
+                                            image_out_size_bytes, NULL, &err));                                                               
+  // Set the kernel arguments                                          
+  OCL_CHECK(err, err = krnl_->setArg(0, imageLToDevice));               
+  OCL_CHECK(err, err = krnl_->setArg(1, imageRToDevice));            
+  OCL_CHECK(err, err = krnl_->setARg(3, imageFromeDevice)); 
+  OCL_CHECK(err, err = krnl_->setArg(2, bm_state_));
+  OCL_CHECK(err, err = krnl_->setArg(4, dsp_info_msg->width));
+  OCL_CHECK(err, err = krnl_->setArg(5, dsp_info_msg->height));
+  
+  // End OpenCL
   pub_disparity_->publish(*disp_msg);
-}
 
-rcl_interfaces::msg::SetParametersResult DisparityNode::parameterSetCb(
-  const std::vector<rclcpp::Parameter> & parameters)
-{
-  rcl_interfaces::msg::SetParametersResult result;
-  result.successful = true;
-  for (const auto & param : parameters) {
-    const std::string param_name = param.get_name();
-    if ("stereo_algorithm" == param_name) {
-      const int stereo_algorithm_value = param.as_int();
-      if (BLOCK_MATCHING == stereo_algorithm_value) {
-        block_matcher_.setStereoType(StereoProcessor::BM);
-      } else if (SEMI_GLOBAL_BLOCK_MATCHING == stereo_algorithm_value) {
-        block_matcher_.setStereoType(StereoProcessor::SGBM);
-      } else {
-        result.successful = false;
-        std::ostringstream oss;
-        oss << "Unknown stereo algorithm type '" << stereo_algorithm_value << "'";
-        result.reason = oss.str();
-      }
-    } else if ("prefilter_size" == param_name) {
-      block_matcher_.setPreFilterSize(param.as_int());
-    } else if ("prefilter_cap" == param_name) {
-      block_matcher_.setPreFilterCap(param.as_int());
-    } else if ("correlation_window_size" == param_name) {
-      block_matcher_.setCorrelationWindowSize(param.as_int());
-    } else if ("min_disparity" == param_name) {
-      block_matcher_.setMinDisparity(param.as_int());
-    } else if ("disparity_range" == param_name) {
-      block_matcher_.setDisparityRange(param.as_int());
-    } else if ("uniqueness_ratio" == param_name) {
-      block_matcher_.setUniquenessRatio(param.as_double());
-    } else if ("texture_threshold" == param_name) {
-      block_matcher_.setTextureThreshold(param.as_int());
-    } else if ("speckle_size" == param_name) {
-      block_matcher_.setSpeckleSize(param.as_int());
-    } else if ("speckle_range" == param_name) {
-      block_matcher_.setSpeckleRange(param.as_int());
-    } else if ("full_dp" == param_name) {
-      block_matcher_.setSgbmMode(param.as_bool());
-    } else if ("P1" == param_name) {
-      block_matcher_.setP1(param.as_double());
-    } else if ("P2" == param_name) {
-      block_matcher_.setP2(param.as_double());
-    } else if ("disp12_max_diff" == param_name) {
-      block_matcher_.setDisp12MaxDiff(param.as_int());
-    }
-  }
-  return result;
 }
 
 }  // namespace stereo_image_proc
 
 // Register component
-RCLCPP_COMPONENTS_REGISTER_NODE(stereo_image_proc::DisparityNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(stereo_image_proc::DisparityNodeFPGA)
