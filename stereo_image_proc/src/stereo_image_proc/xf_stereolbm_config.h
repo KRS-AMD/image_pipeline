@@ -18,9 +18,9 @@
 #define _XF_STEREOBM_CONFIG_H_
 
 #include "hls_stream.h"
-#include "common/xf_common.hpp"
-#include "common/xf_utility.hpp"
-#include "imgproc/xf_stereolbm.hpp"
+#include <vitis_common/common/xf_common.hpp>
+#include <vitis_common/common/xf_utility.hpp>
+#include <vitis_common/imgproc/xf_stereolbm.hpp>
 #include "xf_config_params.h"
 
 // Set the input and output pixel depth:
