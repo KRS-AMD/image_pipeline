@@ -18,11 +18,11 @@
 #define _XF_STEREO_PIPELINE_CONFIG_H_
 
 #include "hls_stream.h"
-#include "common/xf_common.hpp"
-#include "common/xf_utility.hpp"
-#include "imgproc/xf_stereo_pipeline.hpp"
-#include "imgproc/xf_remap.hpp"
-#include "imgproc/xf_stereolbm.hpp"
+#include <vitis_common/common/xf_common.hpp>
+#include <vitis_common/common/xf_utility.hpp>
+#include <vitis_common/imgproc/xf_stereo_pipeline.hpp>
+#include <vitis_common/imgproc/xf_remap.hpp>
+#include <vitis_common/imgproc/xf_stereolbm.hpp>
 #include "xf_config_params.h"
 
 /* config width and height */

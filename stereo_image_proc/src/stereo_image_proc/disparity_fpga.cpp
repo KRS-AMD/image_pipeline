@@ -51,7 +51,7 @@
 #include <opencv2/calib3d/calib3d.hpp>
 
 #include "stereo_image_proc/disparity_fpga.hpp"
-#include "stereo_image_proc/xf_stereo_pipeline_config.h"
+#include "xf_stereo_pipeline_config.h"
 #include <vitis_common/common/xf_headers.hpp>
 #include <vitis_common/common/utilities.hpp>
 #include "tracetools_image_pipeline/tracetools.h"
@@ -365,7 +365,7 @@ RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
  };
  queue_->finish();  
  // End OpenCL
-  pub_disparity_->publish(*output_image);
+  pub_disparity_->publish(*output_image.toImageMsg(), *disp_info_msg);
 
 }
 
