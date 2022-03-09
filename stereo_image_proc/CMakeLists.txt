@@ -48,14 +48,14 @@ rclcpp_components_register_node(${PROJECT_NAME}
 )
 
 # disparity_fpga component (with OpenCL)
-ament_auto_add_library(disparity_fpga SHARED src/disparity_fpga.cpp)
+ament_auto_add_library(disparity_fpga SHARED src/stereo_image_proc/disparity_fpga.cpp)
 target_include_directories(disparity_fpga PUBLIC
   # $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/vitis_common>
   $ENV{XILINX_HLS}/common/technology/autopilot
   $ENV{XILINX_HLS}/include)
 target_link_libraries(disparity_fpga ${OpenCL_LIBRARY})
 target_compile_definitions(disparity_fpga PRIVATE "COMPOSITION_BUILDING_DLL")
-rclcpp_components_register_nodes(resize_fpga "stereo_image_proc::DisparityNodeFPGA")
+rclcpp_components_register_nodes(disparity_fpga "stereo_image_proc::DisparityNodeFPGA")
 set(node_plugins "${node_plugins}stereo_image_proc::DisparityNodeFPGA;$<TARGET_FILE:disparity_fpga>\n")
 
 # point_cloud_fpga component (with OpenCL)
