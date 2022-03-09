@@ -96,7 +96,7 @@ set(node_plugins "${node_plugins}stereo_image_proc::DisparityNodeFPGA;$<TARGET_F
    #  CLOCK 100000000:rectify_accel
    #  LINK
    #  # PACKAGE
-   )
+   #)
  endif()
 
 if(BUILD_TESTING)
