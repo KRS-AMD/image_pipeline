@@ -139,9 +139,8 @@ DisparityNodeFPGA::DisparityNodeFPGA(const rclcpp::NodeOptions & options)
 
   // Create a kernel:
   OCL_CHECK(err, krnl_ = new cl::Kernel(program, "stereolbm_accel", &err));
-}
 
-// End Xilinx init
+  // End Xilinx init
 
   // Declare/read parameters
   int queue_size = this->declare_parameter("queue_size", 5);
@@ -189,7 +188,7 @@ DisparityNodeFPGA::DisparityNodeFPGA(const rclcpp::NodeOptions & options)
     "Filter out if SAD window response does not exceed texture threshold",
     10, 0, 10000, 1);
 
-// Double params
+  // Double params
   std::map<std::string, std::pair<double, rcl_interfaces::msg::ParameterDescriptor>> double_params;
   add_param_to_map(
     double_params,
@@ -270,14 +269,11 @@ void DisparityNodeFPGA::imageCb(
   sensor_msgs::msg::CameraInfo::ConstSharedPtr disp_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(*l_info_msg);
   
   //sensor_msgs::msg::CameraInfo::ConstSharedPtr disp_r_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(*r_info_msg);
- 
   // Compute window of (potentially) valid disparities
   // int border = block_matcher_.getCorrelationWindowSize() / 2;
   // int left = block_matcher_.getDisparityRange() + block_matcher_.getMinDisparity() + border - 1;
   // int wtf;
-  // TODO: replace with accel kernel w/ param prefilertcap, uniquenessratio,texturethreshold, mindisparity
-
- /* if (block_matcher_.getMinDisparity() >= 0) {
+  /* if (block_matcher_.getMinDisparity() >= 0) {
      wtf = border + block_matcher_.getMinDisparity();
   } else {
      wtf = std::max(border, -block_matcher_.getMinDisparity());
@@ -290,22 +286,21 @@ void DisparityNodeFPGA::imageCb(
   // disp_msg->valid_window.width = right - left;
   // disp_msg->valid_window.height = bottom - top;
   
-   // Vitis Vision library ROS to CV image
-   cv_bridge::CvImagePtr cv_ptr_l;
-   cv_bridge::CvImagePtr cv_ptr_r;
-   cv::Mat img_l, img_r, result_hls;
+  // Vitis Vision library ROS to CV image
+  cv_bridge::CvImagePtr cv_ptr_l;
+  cv_bridge::CvImagePtr cv_ptr_r;
+  cv::Mat img_l, img_r, result_hls;
 
-   // TODO: cv_bridge image msgs
-   cv_ptr_l = cv_bridge::toCvCopy(l_image_msg, sensor_msgs::image_encodings::MONO8);
-   cv_ptr_r = cv_bridge::toCvCopy(r_image_msg, sensor_msgs::image_encodings::MONO8);
-RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+  // TODO: cv_bridge image msgs
+  cv_ptr_l = cv_bridge::toCvCopy(l_image_msg, sensor_msgs::image_encodings::MONO8);
+  cv_ptr_r = cv_bridge::toCvCopy(r_image_msg, sensor_msgs::image_encodings::MONO8);
+  RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
 
   // Create cv::Mat views onto all buffers
   /* const cv::Mat_<uint8_t> l_image =
     cv_bridge::toCvShare(l_image_msg, sensor_msgs::image_encodings::MONO8)->image;
   const cv::Mat_<uint8_t> r_image =
-    cv_bridge::toCvShare(r_image_msg, sensor_msgs::image_encodings::MONO8)->image;
-*/
+    cv_bridge::toCvShare(r_image_msg, sensor_msgs::image_encodings::MONO8)->image; */
   // Perform block matching to find the disparities
   //block_matcher_.processDisparity(l_image, r_image, model_, *disp_msg);
   // OpenCL section WIP
@@ -313,22 +308,22 @@ RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
   cl_int err;
   size_t image_l_in_size_bytes, image_r_in_size_bytes, image_out_size_bytes;
 
-    // Assume MONO (1 channels)
-    result_hls.create(cv::Size(dsp_info_msg->width,
-                                dsp_info_msg->height), CV_8UC1);
+  // Assume MONO (1 channels)
+  result_hls.create(cv::Size(disp_info_msg->width,
+                                disp_info_msg->height), CV_8UC1);
 
-    image_l_in_size_bytes = l_info_msg->height * l_info_msg->width *
+  image_l_in_size_bytes = l_info_msg->height * l_info_msg->width *
                                   1 * sizeof(unsigned char);
 
-    // Assume same size as left image for the buffer allocation
-    image_r_in_size_bytes = image_l_in_size_bytes;
+  // Assume same size as left image for the buffer allocation
+  image_r_in_size_bytes = image_l_in_size_bytes;
 
-    image_out_size_bytes = dsp_msg->height * dsp_msg->width *
+  image_out_size_bytes = disp_msg->height * disp_msg->width *
 	                          1 * sizeof(unsigned char);
 
 
   // Allocate the buffers:
-  OCL_CHECK(err, cl::Buffer imageRToDevice(*context_, CL_MEM_READ_ONLY,
+  OCL_CHECK(err, cl::Buffer imageLToDevice(*context_, CL_MEM_READ_ONLY,
                                           image_l_in_size_bytes, NULL, &err));
   OCL_CHECK(err, cl::Buffer imageRToDevice(*context_, CL_MEM_READ_ONLY,
                                           image_r_in_size_bytes, NULL, &err));
@@ -342,29 +337,29 @@ RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
   OCL_CHECK(err, err = krnl_->setArg(4, dsp_info_msg->width));
   OCL_CHECK(err, err = krnl_->setArg(5, dsp_info_msg->height));
  
- OCL_CHECK(err, enqueue_->enqueueWriteBuffer(imageRToDevice, CL_TRUE, 0, image_r_in_size_bytes, cv_ptr_r->image.data)); 
+  OCL_CHECK(err, enqueue_->enqueueWriteBuffer(imageRToDevice, CL_TRUE, 0, image_r_in_size_bytes, cv_ptr_r->image.data)); 
 
- OCL_CHECK(err, enqueue_->enqueueWriteBuffer(imageLToDevice, CL_TRUE, 0, image_l_in_size_bytes, cv_ptr_l->image.data)); 
+  OCL_CHECK(err, enqueue_->enqueueWriteBuffer(imageLToDevice, CL_TRUE, 0, image_l_in_size_bytes, cv_ptr_l->image.data)); 
 
 
- cl::Event event_sp; 
- OCL_CHECK(err, err = queue_->enqueueTask(*krnl_, NULL, &event_sp)); 
+  cl::Event event_sp; 
+  OCL_CHECK(err, err = queue_->enqueueTask(*krnl_, NULL, &event_sp)); 
  
- OCL_CHECK(err, enqueue_->enqueueReadBuffer(imageFromToDevice, CL_TRUE, 0, image_out_size_bytes, result_hls.data)); 
+  OCL_CHECK(err, enqueue_->enqueueReadBuffer(imageFromToDevice, CL_TRUE, 0, image_out_size_bytes, result_hls.data)); 
 
 
- // Output image from cv_bridge to ROS disparity msg
- cv_bridge::CvImage output_image;
- output_image.header = cv_ptr_l->header;
- output_image.encoding = cv_ptr_l->encoding;
- output_image.image = cv::Mat{
+  // Output image from cv_bridge to ROS disparity msg
+  cv_bridge::CvImage output_image;
+  output_image.header = cv_ptr_l->header;
+  output_image.encoding = cv_ptr_l->encoding;
+  output_image.image = cv::Mat{
 	static_cast<int>(dsp_info_msg->height),
 	static_cast<int>(dsp_info_msg->width),
         CV_8UC1,
         result_hls.data
- };
- queue_->finish();  
- // End OpenCL
+  };
+  queue_->finish();  
+  // End OpenCL
   pub_disparity_->publish(*output_image.toImageMsg(), *disp_info_msg);
 
 }

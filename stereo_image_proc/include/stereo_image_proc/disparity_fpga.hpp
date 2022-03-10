@@ -19,8 +19,8 @@
       Joshua Whitley
 */
 
-#ifndef STEREO_IMAGE_PROC_RESIZE_FPGA_HPP_
-#define STEREO_IMAGE_PROC_RESIZE_FPGA_HPP_
+#ifndef STEREO_IMAGE_PROC_DISPARITY_FPGA_HPP_
+#define STEREO_IMAGE_PROC_DISPARITY_FPGA_HPP_
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
