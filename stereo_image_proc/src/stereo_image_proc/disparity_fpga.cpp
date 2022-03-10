@@ -207,24 +207,29 @@ DisparityNodeFPGA::DisparityNodeFPGA(const rclcpp::NodeOptions & options)
   std::vector<rclcpp::Parameter> params = this->get_parameters(param_names);
   for (auto &param : params)
   {
-    int index = 0;
-    RCLCPP_INFO(this->get_logger(), "param name: %s, value: %s",
-                param.get_name().c_str(), param.value_to_string().c_str());
-    switch(param.get_name().c_str()) {
-      case "prefilter_cap":
-        bm_state_[0] = param.value_to_string().c_string();
-      case "uniqueness_ratio":
-        bm_state_[1] = param.value_to_string().c_string();
-      case "texture_threshold":
-        bm_state_[2] = param.value_to_string().c_string();
-      case "min_disparity":
-        bm_state_[3] = param.value_to_string().c_string();
-    } // end-switch
+    std::string param_name = param.get_name().c_str();
+    std::string param_val = param.value_to_string().c_str();
+    
+    if (param_name == "prefilter_cap") {
+    bm_state_[0] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    } 
+    else if (param_name == "uniqueness_ratio") {
+    bm_state_[1] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    }
+    else if (param_name == "texture_threshold") {
+    bm_state_[2] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    }
+    else if (param_name ==  "min_disparity") {
+    bm_state_[3] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    }
+    else {
+      continue;
+    } // end-if-else-if
 		    
 
   } // end-for
 
-  pub_disparity_ = create_publisher<stereo_msgs::msg::DisparityImage>("disparity", 1);
+  pub_disparity_= this->create_publisher<stereo_msgs::msg::DisparityImage>("disparity", 1);
 
   connectCb();
 }
@@ -292,10 +297,17 @@ void DisparityNodeFPGA::imageCb(
   cv::Mat img_l, img_r, result_hls;
 
   // TODO: cv_bridge image msgs
+  try {
   cv_ptr_l = cv_bridge::toCvCopy(l_image_msg, sensor_msgs::image_encodings::MONO8);
   cv_ptr_r = cv_bridge::toCvCopy(r_image_msg, sensor_msgs::image_encodings::MONO8);
-  RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
-
+  } catch (cv_bridge::Exception & e) { 
+	  RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+  /*        TRACEPOINT(stereo_image_proc_disparity_cv,
+	  static_cast<const void *>(this),
+	  static_cast<const void *>(&(*l_image_msg)),
+	  static_cast<const void *>(&(*r_image_msg)));*/
+    return;
+  }
   // Create cv::Mat views onto all buffers
   /* const cv::Mat_<uint8_t> l_image =
     cv_bridge::toCvShare(l_image_msg, sensor_msgs::image_encodings::MONO8)->image;
@@ -309,8 +321,8 @@ void DisparityNodeFPGA::imageCb(
   size_t image_l_in_size_bytes, image_r_in_size_bytes, image_out_size_bytes;
 
   // Assume MONO (1 channels)
-  result_hls.create(cv::Size(disp_info_msg->width,
-                                disp_info_msg->height), CV_8UC1);
+  result_hls.create(cv::Size(l_info_msg->width,
+                                l_info_msg->height), CV_8UC1);
 
   image_l_in_size_bytes = l_info_msg->height * l_info_msg->width *
                                   1 * sizeof(unsigned char);
@@ -318,7 +330,7 @@ void DisparityNodeFPGA::imageCb(
   // Assume same size as left image for the buffer allocation
   image_r_in_size_bytes = image_l_in_size_bytes;
 
-  image_out_size_bytes = disp_msg->height * disp_msg->width *
+  image_out_size_bytes = l_info_msg->height * l_info_msg->width *
 	                          1 * sizeof(unsigned char);
 
 
@@ -332,20 +344,20 @@ void DisparityNodeFPGA::imageCb(
   // Set the kernel arguments                                          
   OCL_CHECK(err, err = krnl_->setArg(0, imageLToDevice));               
   OCL_CHECK(err, err = krnl_->setArg(1, imageRToDevice));            
-  OCL_CHECK(err, err = krnl_->setARg(3, imageFromeDevice)); 
+  OCL_CHECK(err, err = krnl_->setArg(3, imageFromDevice)); 
   OCL_CHECK(err, err = krnl_->setArg(2, bm_state_));
-  OCL_CHECK(err, err = krnl_->setArg(4, dsp_info_msg->width));
-  OCL_CHECK(err, err = krnl_->setArg(5, dsp_info_msg->height));
+  OCL_CHECK(err, err = krnl_->setArg(4, disp_info_msg->width));
+  OCL_CHECK(err, err = krnl_->setArg(5, disp_info_msg->height));
  
-  OCL_CHECK(err, enqueue_->enqueueWriteBuffer(imageRToDevice, CL_TRUE, 0, image_r_in_size_bytes, cv_ptr_r->image.data)); 
+  OCL_CHECK(err, queue_->enqueueWriteBuffer(imageRToDevice, CL_TRUE, 0, image_r_in_size_bytes, cv_ptr_r->image.data)); 
 
-  OCL_CHECK(err, enqueue_->enqueueWriteBuffer(imageLToDevice, CL_TRUE, 0, image_l_in_size_bytes, cv_ptr_l->image.data)); 
+  OCL_CHECK(err, queue_->enqueueWriteBuffer(imageLToDevice, CL_TRUE, 0, image_l_in_size_bytes, cv_ptr_l->image.data)); 
 
 
   cl::Event event_sp; 
   OCL_CHECK(err, err = queue_->enqueueTask(*krnl_, NULL, &event_sp)); 
  
-  OCL_CHECK(err, enqueue_->enqueueReadBuffer(imageFromToDevice, CL_TRUE, 0, image_out_size_bytes, result_hls.data)); 
+  OCL_CHECK(err, queue_->enqueueReadBuffer(imageFromDevice, CL_TRUE, 0, image_out_size_bytes, result_hls.data)); 
 
 
   // Output image from cv_bridge to ROS disparity msg
@@ -353,16 +365,18 @@ void DisparityNodeFPGA::imageCb(
   output_image.header = cv_ptr_l->header;
   output_image.encoding = cv_ptr_l->encoding;
   output_image.image = cv::Mat{
-	static_cast<int>(dsp_info_msg->height),
-	static_cast<int>(dsp_info_msg->width),
+	static_cast<int>(disp_info_msg->height),
+	static_cast<int>(disp_info_msg->width),
         CV_8UC1,
         result_hls.data
-  };
+    };
+  *disp_msg = *output_image.toImageMsg();
+
   queue_->finish();  
   // End OpenCL
-  pub_disparity_->publish(*output_image.toImageMsg(), *disp_info_msg);
+  pub_disparity_->publish(*disp_msg, *disp_info_msg);
 
-}
+} // end cb
 
 }  // namespace stereo_image_proc
 

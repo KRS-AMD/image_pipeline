@@ -58,7 +58,7 @@ protected:
   int height_;
   int width_;
   unsigned char bm_state_[4];
-
+  
   cl::Kernel* krnl_;
   cl::Context* context_;
   cl::CommandQueue* queue_;
