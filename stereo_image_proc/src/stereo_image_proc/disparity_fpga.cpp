@@ -294,7 +294,7 @@ void DisparityNodeFPGA::imageCb(
   // Vitis Vision library ROS to CV image
   cv_bridge::CvImagePtr cv_ptr_l;
   cv_bridge::CvImagePtr cv_ptr_r;
-  cv::Mat img_l, img_r, result_hls;
+  cv::Mat img, result_hls;
 
   // TODO: cv_bridge image msgs
   try {
@@ -367,14 +367,15 @@ void DisparityNodeFPGA::imageCb(
   output_image.image = cv::Mat{
 	static_cast<int>(disp_info_msg->height),
 	static_cast<int>(disp_info_msg->width),
-        CV_8UC1,
+        CV_8UC3,
         result_hls.data
     };
-  *disp_msg = *output_image.toImageMsg();
 
   queue_->finish();  
+
+  disp_msg->image = *output_image.image;
   // End OpenCL
-  pub_disparity_->publish(*disp_msg, *disp_info_msg);
+  pub_disparity_->publish(*disp_msg);
 
 } // end cb
 
