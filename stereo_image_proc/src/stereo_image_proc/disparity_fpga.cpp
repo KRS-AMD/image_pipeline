@@ -373,7 +373,7 @@ void DisparityNodeFPGA::imageCb(
 
   queue_->finish();  
 
-  disp_msg->image = *output_image.image;
+  disp_msg->image = *output_image.toImageMsg();
   // End OpenCL
   pub_disparity_->publish(*disp_msg);
 
