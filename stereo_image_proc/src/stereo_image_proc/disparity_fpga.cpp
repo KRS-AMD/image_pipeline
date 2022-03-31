@@ -211,16 +211,16 @@ DisparityNodeFPGA::DisparityNodeFPGA(const rclcpp::NodeOptions & options)
     std::string param_val = param.value_to_string().c_str();
     
     if (param_name == "prefilter_cap") {
-    bm_state_[0] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    bm_state_[0] = static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
     } 
     else if (param_name == "uniqueness_ratio") {
-    bm_state_[1] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    bm_state_[1] = static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
     }
     else if (param_name == "texture_threshold") {
-    bm_state_[2] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    bm_state_[2] = static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
     }
     else if (param_name ==  "min_disparity") {
-    bm_state_[3] == static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
+    bm_state_[3] = static_cast<unsigned char>(std::stoi(param_val, nullptr, 10));
     }
     else {
       continue;
