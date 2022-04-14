@@ -74,7 +74,7 @@ target_compile_definitions(resize
 rclcpp_components_register_nodes(resize "image_proc::ResizeNode")
 set(node_plugins "${node_plugins}image_proc::ResizeNode;$<TARGET_FILE:resize>\n")
 
-
+if (DEFINED CMAKE_SYSROOT)
 if (DEFINED ROS_VITIS)
   # resize_fpga component (with OpenCL)
   ament_auto_add_library(resize_fpga SHARED src/resize_fpga.cpp)
@@ -246,6 +246,7 @@ if (DEFINED ROS_VITIS)
   endif()  # ROS_XRT
 endif()  # ROS_VITIS
 
+
 # image_proc kernel, all kernels smashed into a single xclbin
 #
 if(ROS_ACCELERATION)
@@ -334,6 +335,7 @@ if(ROS_ACCELERATION)
     )
   endif()  # ROS_VITIS
 endif()  # ROS_ACCELERATION
+endif()  # CMAKE_SYSROOT
 
 # crop_decimate library
 ament_auto_add_library(crop_decimate SHARED
