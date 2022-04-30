@@ -25,14 +25,18 @@ void stereolbm_accel(ap_uint<INPUT_PTR_WIDTH>* img_in_l,
                      ap_uint<OUTPUT_PTR_WIDTH>* img_out,
                      int rows,
                      int cols) {
+
+
+// pragma's indicated legacy code? Vitis synthesis fails due to multiple bundles, causing default control protocol to renamed control_r,
+// and violating more than one s_axilite interface
 // clang-format off
 	#pragma HLS INTERFACE m_axi      port=img_in_l      offset=slave  bundle=gmem0 depth=__XF_DEPTH_IN
 	#pragma HLS INTERFACE m_axi      port=img_in_r      offset=slave  bundle=gmem1 depth=__XF_DEPTH_IN
 	#pragma HLS INTERFACE m_axi      port=bm_state_in   offset=slave  bundle=gmem2 depth=4
 	#pragma HLS INTERFACE m_axi      port=img_out       offset=slave  bundle=gmem3 depth=__XF_DEPTH_OUT
-	#pragma HLS INTERFACE s_axilite  port=rows		bundle=control
-	#pragma HLS INTERFACE s_axilite  port=cols		bundle=control
-	#pragma HLS INTERFACE s_axilite  port=return		bundle=control
+	#pragma HLS INTERFACE s_axilite  port=rows
+	#pragma HLS INTERFACE s_axilite  port=cols
+	#pragma HLS INTERFACE s_axilite  port=return
     // clang-format on
 
     xf::cv::Mat<IN_TYPE, HEIGHT, WIDTH, NPC> imgInputL(rows, cols);
