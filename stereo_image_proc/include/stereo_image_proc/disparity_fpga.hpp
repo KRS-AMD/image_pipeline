@@ -58,7 +58,7 @@ protected:
   int height_;
   int width_;
   unsigned char bm_state_[4];
-  
+
   cl::Kernel* krnl_;
   cl::Context* context_;
   cl::CommandQueue* queue_;
@@ -92,9 +92,6 @@ using ExactPolicy = message_filters::sync_policies::ExactTime<
 
   // Processing state (note: only safe because we're single-threaded!)
   image_geometry::StereoCameraModel model_;
-  // contains scratch buffers for block matching
-  // TODO: replace with acceleration kernel
-  //stereo_image_proc::StereoProcessor block_matcher_;
 
   void connectCb();
   void imageCb(

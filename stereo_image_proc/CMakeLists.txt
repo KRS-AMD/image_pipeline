@@ -14,15 +14,22 @@ endif()
 # see https://archive.eclipse.org/tracecompass/doc/stable/org.eclipse.tracecompass.doc.user/LTTng-UST-Analyses.html#Flame_Chart_View
 set(CMAKE_CXX_FLAGS "-g -O2 -finstrument-functions")
 
+find_package(ament_cuda)
+find_package(ament_vitis)
+if (DEFINED ROS_VITIS)  # NOTE, someone else must "find_package(ament_vitis)"
+  find_package(vitis_common)
+  find_package(OpenCL REQUIRED)
+
+  if (DEFINED ROS_XRT)
+    # find_package(XRT REQUIRED)  # needs to be reviewed, issues with sysroot isolation
+  endif()
+endif()
+
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
-find_package(ament_vitis)
-find_package(vitis_common REQUIRED)
-find_package(OpenCL REQUIRED)
-find_package(OpenCV REQUIRED)
-#find_package(XRT REQUIRED)  # needs to be reviewed, issues with sysroot isolation
 find_package(image_proc)
+find_package(OpenCV REQUIRED)
 if(OpenCV_VERSION VERSION_LESS "3.2.0")
   message(FATAL "Minimum OpenCV version is 3.2.0 (found version ${OpenCV_VERSION})")
 endif()
@@ -48,53 +55,51 @@ rclcpp_components_register_node(${PROJECT_NAME}
   EXECUTABLE point_cloud_node
 )
 
-# disparity_fpga component (with OpenCL)
-ament_auto_add_library(disparity_fpga SHARED src/stereo_image_proc/disparity_fpga.cpp)
-target_include_directories(disparity_fpga PUBLIC
-  # $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/vitis_common>
-  $ENV{XILINX_HLS}/common/technology/autopilot
-  $ENV{XILINX_HLS}/include)
-target_link_libraries(disparity_fpga ${OpenCL_LIBRARY})
-target_compile_definitions(disparity_fpga PRIVATE "COMPOSITION_BUILDING_DLL")
-rclcpp_components_register_nodes(disparity_fpga "stereo_image_proc::DisparityNodeFPGA")
-set(node_plugins "${node_plugins}stereo_image_proc::DisparityNodeFPGA;$<TARGET_FILE:disparity_fpga>\n")
+if(DEFINED ROS_VITIS)
 
-# point_cloud_fpga component (with OpenCL)
-#ament_auto_add_library(pointcloud_fpga SHARED src/pointcloud_fpga.cpp)
-#target_include_directories(pointcloud_fpga PUBLIC
-#  # $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/vitis_common>
-#  $ENV{XILINX_HLS}/common/technology/autopilot
-#  $ENV{XILINX_HLS}/include)
-#target_link_libraries(pointcloud_fpga ${OpenCL_LIBRARY})
-#target_compile_definitions(pointcloud_fpga PRIVATE "COMPOSITION_BUILDING_DLL")
-#rclcpp_components_register_nodes(pointcloud_fpga "image_proc::PointCloudNodeFPGA")
-#set(node_plugins "${node_plugins}image_proc::PointCloudNodeFPGA;$<TARGET_FILE:pointcloud_fpga>\n")
+  set(lib_depends
+  "rclcpp"
+  "vitis_common"
+  )
+  # disparity_fpga component (with OpenCL)
+  ament_auto_add_library(disparity_fpga SHARED src/stereo_image_proc/disparity_fpga.cpp)
+  ament_export_include_directories(include/stereo_image_proc)
+  ament_target_dependencies(${PROJECT_NAME} ${lib_depends})
+  target_include_directories(disparity_fpga PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/stereo_image_proc>
+    $<INSTALL_INTERFACE:include>)
+    $ENV{XILINX_HLS}/common/technology/autopilot
+    $ENV{XILINX_HLS}/include)
+  target_link_libraries(disparity_fpga ${OpenCL_LIBRARY})
+  target_compile_definitions(disparity_fpga PRIVATE "COMPOSITION_BUILDING_DLL")
+
+  set(node_plugins "${node_plugins}stereo_image_proc::DisparityNodeFPGA;$<TARGET_FILE:disparity_fpga>\n")
+
+  # point_cloud_fpga component (with OpenCL)
+  #ament_auto_add_library(pointcloud_fpga SHARED src/pointcloud_fpga.cpp)
+  #target_include_directories(pointcloud_fpga PUBLIC
+  #  # $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/vitis_common>
+  #  $ENV{XILINX_HLS}/common/technology/autopilot
+  #  $ENV{XILINX_HLS}/include)
+  #target_link_libraries(pointcloud_fpga ${OpenCL_LIBRARY})
+  #target_compile_definitions(pointcloud_fpga PRIVATE "COMPOSITION_BUILDING_DLL")
+  #rclcpp_components_register_nodes(pointcloud_fpga "image_proc::PointCloudNodeFPGA")
+  #set(node_plugins "${node_plugins}image_proc::PointCloudNodeFPGA;$<TARGET_FILE:pointcloud_fpga>\n")
+endif()
 
  if(ROS_ACCELERATION)
-   # local stereo block matching kernel
-   vitis_acceleration_kernel(
-     NAME stereolbm_accel
-     FILE src/stereo_image_proc/xf_stereolbm_accel.cpp
-     CONFIG cfg/kv260.cfg
-     INCLUDE
-       include/stereo_image_proc
-       ${CMAKE_INSTALL_PREFIX}/include
-     TYPE hw
-   )
-
-   # rectify_accel kernel
-   #   vitis_acceleration_kernel(
-   #  NAME rectify_accel
-   #  FILE src/image_proc/xf_rectify_accel.cpp
-   #  CONFIG cfg/kv260.cfg
-   #  INCLUDE
-   #    include/image_proc
-   #    ${CMAKE_INSTALL_PREFIX}/include
-   #  TYPE hw
-   #  CLOCK 100000000:rectify_accel
-   #  LINK
-   #  # PACKAGE
-   #)
+   if (DEFINED ROS_VITIS)
+     # local stereo block matching kernel
+     vitis_acceleration_kernel(
+       NAME stereolbm_accel
+       FILE src/stereo_image_proc/xf_stereolbm_accel.cpp
+       CONFIG cfg/kv260.cfg
+       INCLUDE
+         include/stereo_image_proc
+         ${CMAKE_INSTALL_PREFIX}/include
+       TYPE hw
+     )
+   endif()
  endif()
 
 if(BUILD_TESTING)

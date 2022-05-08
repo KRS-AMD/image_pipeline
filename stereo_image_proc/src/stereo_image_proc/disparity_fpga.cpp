@@ -226,7 +226,6 @@ DisparityNodeFPGA::DisparityNodeFPGA(const rclcpp::NodeOptions & options)
       continue;
     } // end-if-else-if
 
-
   } // end-for
 
   pub_disparity_= this->create_publisher<stereo_msgs::msg::DisparityImage>("disparity", 1);
@@ -273,23 +272,6 @@ void DisparityNodeFPGA::imageCb(
   // Allocate a new disparity info message
   sensor_msgs::msg::CameraInfo::ConstSharedPtr disp_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(*l_info_msg);
 
-  // Compute window of (potentially) valid disparities
-  // int border = block_matcher_.getCorrelationWindowSize() / 2;
-  // int left = block_matcher_.getDisparityRange() + block_matcher_.getMinDisparity() + border - 1;
-  // int wtf;
-  /* if (block_matcher_.getMinDisparity() >= 0) {
-     wtf = border + block_matcher_.getMinDisparity();
-  } else {
-     wtf = std::max(border, -block_matcher_.getMinDisparity());
-  } */
-  // int right = disp_msg->image.width - 1 - wtf;
-  // int top = border;
-  // int bottom = disp_msg->image.height - 1 - border;
-  // disp_msg->valid_window.x_offset = left;
-  // disp_msg->valid_window.y_offset = top;
-  // disp_msg->valid_window.width = right - left;
-  // disp_msg->valid_window.height = bottom - top;
-
   // Vitis Vision library ROS to CV image
   cv_bridge::CvImagePtr cv_ptr_l;
   cv_bridge::CvImagePtr cv_ptr_r;
@@ -326,7 +308,6 @@ void DisparityNodeFPGA::imageCb(
   image_out_size_bytes = l_info_msg->height * l_info_msg->width *
 	                          1 * sizeof(unsigned char);
 
-
   // Allocate the buffers:
   OCL_CHECK(err, cl::Buffer imageLToDevice(*context_, CL_MEM_READ_ONLY,
                                           image_l_in_size_bytes, NULL, &err));
@@ -346,12 +327,10 @@ void DisparityNodeFPGA::imageCb(
 
   OCL_CHECK(err, queue_->enqueueWriteBuffer(imageLToDevice, CL_TRUE, 0, image_l_in_size_bytes, cv_ptr_l->image.data));
 
-
   cl::Event event_sp;
   OCL_CHECK(err, err = queue_->enqueueTask(*krnl_, NULL, &event_sp));
 
   OCL_CHECK(err, queue_->enqueueReadBuffer(imageFromDevice, CL_TRUE, 0, image_out_size_bytes, hls_disp16.data));
-
 
   // Output cv_bridge image
   cv_bridge::CvImage hls_cv;
@@ -365,7 +344,6 @@ void DisparityNodeFPGA::imageCb(
     };
 
   queue_->finish();
-
 
   // Fill in DisparityImage image data, data struct used to store image data before converting to 32-bit float
   sensor_msgs::msg::Image & dimage = disp_msg->image;
