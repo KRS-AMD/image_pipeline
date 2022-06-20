@@ -100,8 +100,8 @@ using ExactPolicy = message_filters::sync_policies::ExactTime<
     const sensor_msgs::msg::Image::ConstSharedPtr & r_image_msg,
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & r_info_msg);
 
-  rcl_interfaces::msg::SetParametersResult parameterSetCb(
-    const std::vector<rclcpp::Parameter> & parameters);
+ // rcl_interfaces::msg::SetParametersResult parameterSetCb(
+   // const std::vector<rclcpp::Parameter> & parameters);
 
 };
 
