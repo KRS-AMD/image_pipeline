@@ -381,7 +381,7 @@ void DisparityNodeFPGA::imageCb(
 
   // We convert from 16-bit fixed-point to float disparity and also adjust for any x-offset between
   // the principal points: d = d_fp*inv_dpp - (cx_l - cx_r)
-  hls_cv.image.convertTo(dmat, dmat.type(), inv_dpp, -(model.left().cx() - model.right().cx()));
+  hls_cv.image.convertTo(dmat, dmat.type(), inv_dpp, -(model_.left().cx() - model_.right().cx()));
   RCUTILS_ASSERT(dmat.data == &hls_disp16.data[0]);
   // TODO(unknown): is_bigendian?
 
