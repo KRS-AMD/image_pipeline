@@ -58,6 +58,8 @@ rclcpp_components_register_node(${PROJECT_NAME}
 
 if(DEFINED ROS_VITIS)
 
+
+
   set(lib_depends
   "rclcpp"
   "rclcpp_components"
@@ -65,7 +67,7 @@ if(DEFINED ROS_VITIS)
   )
   # disparity_fpga component (with OpenCL)
   ament_auto_add_library(disparity_fpga SHARED src/stereo_image_proc/disparity_fpga.cpp)
-  ament_target_dependencies(${PROJECT_NAME} ${lib_depends})
+
   target_include_directories(disparity_fpga PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/stereo_image_proc>
     $<INSTALL_INTERFACE:include>
@@ -74,7 +76,12 @@ if(DEFINED ROS_VITIS)
   target_link_libraries(disparity_fpga ${OpenCL_LIBRARY})
   target_compile_definitions(disparity_fpga PRIVATE "COMPOSITION_BUILDING_DLL")
 
-  rclcpp_components_register_nodes(disparity_fpga "stereo_image_proc::DisparityNodeFPGA")
+  rclcpp_components_register_node(disparity_fpga
+    PLUGIN "stereo_image_proc::DisparityNodeFPGA"
+    EXECUTABLE disparity_fpga_node
+  )
+
+
   set(node_plugins "${node_plugins}stereo_image_proc::DisparityNodeFPGA;$<TARGET_FILE:disparity_fpga>\n")
 
   # point_cloud_fpga component (with OpenCL)
